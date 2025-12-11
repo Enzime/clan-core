@@ -27,8 +27,17 @@
 
       perSystem =
         { pkgs, inputs', ... }:
+        let
+          clan-cli = inputs'.clan-core.packages.clan-cli;
+        in
         {
-          devShells.default = pkgs.mkShell { packages = [ inputs'.clan-core.packages.clan-cli ]; };
+          devShells.default = pkgs.mkShell {
+            packages = [ clan-cli ];
+            shellHook = ''
+              # Set up shell completions for clan CLI
+              source ${clan-cli}/share/bash-completion/completions/clan
+            '';
+          };
 
           # Customize nixpkgs
           # _module.args.pkgs = import inputs.nixpkgs {

@@ -42,9 +42,18 @@
             "x86_64-darwin"
           ]
           (system: {
-            default = clan-core.inputs.nixpkgs.legacyPackages.${system}.mkShell {
-              packages = [ clan-core.packages.${system}.clan-cli ];
-            };
+            default =
+              let
+                pkgs = clan-core.inputs.nixpkgs.legacyPackages.${system};
+                clan-cli = clan-core.packages.${system}.clan-cli;
+              in
+              pkgs.mkShell {
+                packages = [ clan-cli ];
+                shellHook = ''
+                  # Set up shell completions for clan CLI
+                  source ${clan-cli}/share/bash-completion/completions/clan
+                '';
+              };
           });
     };
 }
