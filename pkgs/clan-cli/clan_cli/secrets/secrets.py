@@ -459,7 +459,7 @@ def register_secrets_parser(subparser: argparse._SubParsersAction) -> None:
     parser_get.set_defaults(func=get_command)
 
     parser_set = subparser.add_parser("set", help="set a secret")
-    add_secret_argument(parser_set, False)
+    add_secret_argument(parser_set, True)
     set_group_action = parser_set.add_argument(
         "--group",
         type=str,
