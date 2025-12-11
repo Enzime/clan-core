@@ -21,22 +21,44 @@ in
     (lib.mkRenamedOptionModule [ "clan" ] [ "flake" "clan" ])
   ];
 
-  options.perSystem = mkPerSystemOption ({
-    options.clan.pkgs = lib.mkOption {
-      description = ''
-        Packages for system
+  options.perSystem = mkPerSystemOption (
+    { pkgs, system, ... }:
+    let
+      clan-cli = clan-core.packages.${system}.clan-cli;
+    in
+    {
+      options.clan.pkgs = lib.mkOption {
+        description = ''
+          Packages for system
 
-        This will set the pkgs for every system used in a 'clan'
+          This will set the pkgs for every system used in a 'clan'
 
-        !!! Warning
-            If pkgsForSystem is set explicitly, that has higher precedence.
+          !!! Warning
+              If pkgsForSystem is set explicitly, that has higher precedence.
 
-            This option has no effect if pkgsForSystem is set.
-      '';
-      type = types.raw;
-      default = null;
-    };
-  });
+              This option has no effect if pkgsForSystem is set.
+        '';
+        type = types.raw;
+        default = null;
+      };
+
+      config.devShells.clan = pkgs.mkShell {
+        packages = [ clan-cli ];
+        shellHook = ''
+          # Add clan-cli share to XDG_DATA_DIRS for shell completion discovery
+          # - fish auto-scans $XDG_DATA_DIRS/fish/vendor_completions.d/
+          # - bash-completion scans $XDG_DATA_DIRS/bash-completion/completions/
+          export XDG_DATA_DIRS="${clan-cli}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+
+          # For interactive bash shells (nix develop), source completions directly
+          # This is needed because bash-completion only scans at startup
+          if [[ -n "''${BASH_VERSION:-}" && -n "''${PS1:-}" ]]; then
+            source "${clan-cli}/share/bash-completion/completions/clan"
+          fi
+        '';
+      };
+    }
+  );
 
   options.flake = {
     # CLI compat

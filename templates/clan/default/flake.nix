@@ -50,8 +50,16 @@
               pkgs.mkShell {
                 packages = [ clan-cli ];
                 shellHook = ''
-                  # Set up shell completions for clan CLI
-                  source ${clan-cli}/share/bash-completion/completions/clan
+                  # Add clan-cli share to XDG_DATA_DIRS for shell completion discovery
+                  # - fish auto-scans $XDG_DATA_DIRS/fish/vendor_completions.d/
+                  # - bash-completion scans $XDG_DATA_DIRS/bash-completion/completions/
+                  export XDG_DATA_DIRS="${clan-cli}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+
+                  # For interactive bash shells (nix develop), source completions directly
+                  # This is needed because bash-completion only scans at startup
+                  if [[ -n "''${BASH_VERSION:-}" && -n "''${PS1:-}" ]]; then
+                    source "${clan-cli}/share/bash-completion/completions/clan"
+                  fi
                 '';
               };
           });
