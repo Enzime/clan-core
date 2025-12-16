@@ -1,5 +1,5 @@
+import base64
 import io
-import json
 import logging
 import shutil
 import subprocess
@@ -21,22 +21,20 @@ log = logging.getLogger(__name__)
 
 
 class SecretStore(StoreBase):
-    """Bitwarden secret store backend for clan vars.
+    """Bitwarden secret store backend for clan vars using rbw.
 
-    This backend stores secrets in Bitwarden using the Bitwarden CLI (bw).
-    Secrets are stored as secure notes with custom fields, organized by
-    a folder structure that mirrors the vars hierarchy.
+    This backend stores secrets in Bitwarden using rbw (unofficial Bitwarden CLI).
+    Secrets are stored as password entries organized by folder structure.
 
     Requirements:
-    - Bitwarden CLI (bw) must be installed and available in PATH
-    - User must be logged in (`bw login`) and have their vault unlocked
-    - BW_SESSION environment variable must be set with the session key
+    - rbw must be installed and available in PATH
+    - rbw must be configured and logged in (`rbw config` and `rbw login`)
+    - rbw-agent must be running (`rbw unlock`)
 
     Storage structure in Bitwarden:
     - Folder: clan-vars/per-machine/<machine>/<generator>
-    - Item name: <var-name>
-    - Item type: Secure Note
-    - Content stored in notes field (base64 encoded for binary data)
+    - Entry name: <var-name>
+    - Content stored as password (base64 encoded for binary safety)
     """
 
     @property
@@ -46,27 +44,26 @@ class SecretStore(StoreBase):
     def __init__(self, flake: Flake) -> None:
         super().__init__(flake)
         self.entry_prefix = "clan-vars"
-        self._organization_id: str | None = None
 
     @property
     def store_name(self) -> str:
         return "bitwarden"
 
-    def _ensure_bw_available(self) -> None:
-        """Check if Bitwarden CLI is available."""
-        if not shutil.which("bw"):
-            msg = "Bitwarden CLI (bw) not found in PATH. Please install it first."
+    def _ensure_rbw_available(self) -> None:
+        """Check if rbw is available."""
+        if not shutil.which("rbw"):
+            msg = "rbw not found in PATH. Please install it first: https://github.com/doy/rbw"
             raise ClanError(msg)
 
-    def _run_bw(
+    def _run_rbw(
         self,
         *args: str,
         input: bytes | None = None,  # noqa: A002
         check: bool = True,
     ) -> subprocess.CompletedProcess[bytes]:
-        """Run a Bitwarden CLI command."""
-        self._ensure_bw_available()
-        cmd = ["bw", *args]
+        """Run an rbw command."""
+        self._ensure_rbw_available()
+        cmd = ["rbw", *args]
         result = subprocess.run(
             cmd,
             input=input,
@@ -75,83 +72,20 @@ class SecretStore(StoreBase):
         )
         if check and result.returncode != 0:
             stderr = result.stderr.decode() if result.stderr else ""
-            if "not logged in" in stderr.lower() or "vault is locked" in stderr.lower():
+            stdout = result.stdout.decode() if result.stdout else ""
+            if "not logged in" in stderr.lower() or "agent" in stderr.lower():
                 msg = (
-                    "Bitwarden vault is locked or not logged in. "
-                    "Please run 'bw login' and 'bw unlock', then set BW_SESSION environment variable."
+                    "rbw vault is locked or not logged in. "
+                    "Please run 'rbw login' and 'rbw unlock' first."
                 )
                 raise ClanError(msg)
-            msg = f"Bitwarden command failed: {' '.join(cmd)}\n{stderr}"
+            msg = f"rbw command failed: {' '.join(cmd)}\nstderr: {stderr}\nstdout: {stdout}"
             raise ClanError(msg)
         return result
 
     def _sync(self) -> None:
-        """Sync the local Bitwarden cache with the server."""
-        self._run_bw("sync")
-
-    def _get_or_create_folder(self, folder_path: str) -> str:
-        """Get or create a folder in Bitwarden, returning its ID.
-
-        Args:
-            folder_path: Path like "clan-vars/per-machine/myhost/mygen"
-
-        Returns:
-            The folder ID
-        """
-        # List existing folders
-        result = self._run_bw("list", "folders")
-        folders = json.loads(result.stdout.decode())
-
-        # Check if folder exists
-        for folder in folders:
-            if folder.get("name") == folder_path:
-                return folder["id"]
-
-        # Create folder
-        folder_data = json.dumps({"name": folder_path})
-        encoded = subprocess.run(
-            ["bw", "encode"],
-            input=folder_data.encode(),
-            capture_output=True,
-            check=True,
-        ).stdout.decode().strip()
-
-        result = self._run_bw("create", "folder", encoded)
-        created_folder = json.loads(result.stdout.decode())
-        return created_folder["id"]
-
-    def _get_item(self, generator: Generator, name: str) -> dict | None:
-        """Get a Bitwarden item by generator and var name.
-
-        Returns the item dict or None if not found.
-        """
-        folder_path = self._folder_path(generator)
-        item_name = name
-
-        # Search for the item
-        result = self._run_bw("list", "items", "--search", item_name, check=False)
-        if result.returncode != 0:
-            return None
-
-        items = json.loads(result.stdout.decode())
-
-        # Find item with matching name in correct folder
-        result = self._run_bw("list", "folders")
-        folders = json.loads(result.stdout.decode())
-        folder_id = None
-        for folder in folders:
-            if folder.get("name") == folder_path:
-                folder_id = folder["id"]
-                break
-
-        if folder_id is None:
-            return None
-
-        for item in items:
-            if item.get("name") == item_name and item.get("folderId") == folder_id:
-                return item
-
-        return None
+        """Sync the local rbw cache with the server."""
+        self._run_rbw("sync")
 
     def _folder_path(self, generator: Generator) -> str:
         """Get the Bitwarden folder path for a generator."""
@@ -160,6 +94,11 @@ class SecretStore(StoreBase):
         machine = self.get_machine(generator)
         return f"{self.entry_prefix}/per-machine/{machine}/{generator.name}"
 
+    def _entry_name(self, generator: Generator, name: str) -> str:
+        """Get the full entry identifier for rbw (folder/name format)."""
+        folder = self._folder_path(generator)
+        return f"{folder}/{name}"
+
     def _set(
         self,
         generator: Generator,
@@ -167,112 +106,76 @@ class SecretStore(StoreBase):
         value: bytes,
         machine: str,  # noqa: ARG002
     ) -> Path | None:
-        """Store a secret in Bitwarden."""
-        folder_path = self._folder_path(generator)
-        folder_id = self._get_or_create_folder(folder_path)
+        """Store a secret in Bitwarden via rbw."""
+        folder = self._folder_path(generator)
 
-        # Check if item already exists
-        existing_item = self._get_item(generator, var.name)
-
-        # Encode binary data as base64 for safe storage
-        import base64
-
-        # Store raw bytes, encode to base64 string for JSON storage
+        # Base64 encode for safe storage of binary data
         encoded_value = base64.b64encode(value).decode("ascii")
 
-        if existing_item:
-            # Update existing item
-            existing_item["notes"] = encoded_value
-            existing_item["fields"] = [
-                {"name": "encoding", "value": "base64", "type": 0},
-            ]
-            item_json = json.dumps(existing_item)
-            encoded = subprocess.run(
-                ["bw", "encode"],
-                input=item_json.encode(),
-                capture_output=True,
-                check=True,
-            ).stdout.decode().strip()
-            self._run_bw("edit", "item", existing_item["id"], encoded)
-        else:
-            # Create new secure note
-            # Type 2 = Secure Note
-            item_data = {
-                "type": 2,
-                "secureNote": {"type": 0},
-                "name": var.name,
-                "notes": encoded_value,
-                "folderId": folder_id,
-                "fields": [
-                    {"name": "encoding", "value": "base64", "type": 0},
-                ],
-            }
-            item_json = json.dumps(item_data)
-            encoded = subprocess.run(
-                ["bw", "encode"],
-                input=item_json.encode(),
-                capture_output=True,
-                check=True,
-            ).stdout.decode().strip()
-            self._run_bw("create", "item", encoded)
+        # Check if entry already exists
+        if self.exists(generator, var.name):
+            # Remove existing entry first (rbw doesn't have an update command)
+            self._run_rbw("rm", var.name, "--folder", folder, check=False)
+
+        # Add new entry with the secret as password
+        # rbw add takes password from stdin
+        self._run_rbw(
+            "add",
+            "--folder", folder,
+            var.name,
+            input=encoded_value.encode(),
+        )
 
         return None  # Files managed outside git repo
 
     def get(self, generator: Generator, name: str) -> bytes:
-        """Retrieve a secret from Bitwarden."""
-        import base64
+        """Retrieve a secret from Bitwarden via rbw."""
+        folder = self._folder_path(generator)
 
-        item = self._get_item(generator, name)
-        if item is None:
+        result = self._run_rbw("get", "--folder", folder, name, check=False)
+
+        if result.returncode != 0:
             msg = f"Secret not found: {generator.name}/{name}"
             raise ClanError(msg)
 
-        notes = item.get("notes", "")
-
-        # Check if base64 encoded
-        fields = item.get("fields", [])
-        is_base64 = any(
-            f.get("name") == "encoding" and f.get("value") == "base64" for f in fields
-        )
-
-        if is_base64:
-            return base64.b64decode(notes)
-        return notes.encode("utf-8")
+        # Decode from base64
+        encoded_value = result.stdout.decode().strip()
+        try:
+            return base64.b64decode(encoded_value)
+        except Exception:
+            # If not base64 encoded, return as-is (for backwards compat or manual entries)
+            return encoded_value.encode("utf-8")
 
     def exists(self, generator: Generator, name: str) -> bool:
         """Check if a secret exists in Bitwarden."""
-        return self._get_item(generator, name) is not None
+        folder = self._folder_path(generator)
+        result = self._run_rbw("get", "--folder", folder, name, check=False)
+        return result.returncode == 0
 
     def delete(self, generator: Generator, name: str) -> Iterable[Path]:
         """Delete a secret from Bitwarden."""
-        item = self._get_item(generator, name)
-        if item:
-            self._run_bw("delete", "item", item["id"])
+        folder = self._folder_path(generator)
+        self._run_rbw("rm", name, "--folder", folder, check=False)
         return []
 
     def delete_store(self, machine: str) -> Iterable[Path]:
-        """Delete all secrets for a machine."""
+        """Delete all secrets for a machine.
+
+        Note: rbw doesn't have a bulk delete by folder, so we list and delete individually.
+        """
         folder_prefix = f"{self.entry_prefix}/per-machine/{machine}/"
 
-        # Get all folders for this machine
-        result = self._run_bw("list", "folders")
-        folders = json.loads(result.stdout.decode())
+        # List all entries and filter by folder prefix
+        result = self._run_rbw("list", "--fields", "folder,name", check=False)
+        if result.returncode != 0:
+            return []
 
-        folder_ids_to_delete = []
-        for folder in folders:
-            if folder.get("name", "").startswith(folder_prefix):
-                folder_ids_to_delete.append(folder["id"])
-
-        # Delete all items in these folders
-        for folder_id in folder_ids_to_delete:
-            result = self._run_bw("list", "items", "--folderid", folder_id)
-            items = json.loads(result.stdout.decode())
-            for item in items:
-                self._run_bw("delete", "item", item["id"])
-
-        # Delete the folders
-        for folder_id in folder_ids_to_delete:
-            self._run_bw("delete", "folder", folder_id)
+        # Parse output and delete matching entries
+        for line in result.stdout.decode().splitlines():
+            if "\t" in line:
+                entry_folder, entry_name = line.split("\t", 1)
+                if entry_folder.startswith(folder_prefix):
+                    self._run_rbw("rm", entry_name, "--folder", entry_folder, check=False)
 
         return []
 
@@ -286,8 +189,8 @@ class SecretStore(StoreBase):
             if file.secret
         ]
 
-        # Include sync timestamp
-        result = self._run_bw("sync", check=False)
+        # Sync to ensure we have latest data
+        self._run_rbw("sync", check=False)
 
         return b"\n".join(sorted(manifest))
 
