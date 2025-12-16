@@ -131,6 +131,44 @@ def test_ssh_shell_from_deploy(
 
     success_txt = flake.path / "success.txt"
     assert not success_txt.exists()
+    # Test with positional command (new syntax)
+    cli.run(
+        [
+            "ssh",
+            "--flake",
+            str(flake.path),
+            "m1_machine",
+            "--host-key-check=none",
+            "--ssh-option",
+            "IdentityFile",
+            str(host.private_key),
+            "touch",
+            str(success_txt),
+            "&&",
+            "exit 0",
+        ],
+    )
+
+    assert success_txt.exists()
+
+
+@pytest.mark.with_core
+def test_ssh_shell_with_remote_command_flag(
+    hosts: list[Remote],
+    flake: ClanFlake,
+) -> None:
+    """Test backwards compatibility with --remote-command flag."""
+    host = hosts[0]
+
+    machine1_config = flake.machines["m1_machine"] = create_test_machine_config()
+    machine1_config["clan"]["networking"]["targetHost"] = host.ssh_url()
+    flake.refresh()
+
+    assert host.private_key
+
+    success_txt = flake.path / "success_flag.txt"
+    assert not success_txt.exists()
+    # Test with --remote-command flag (backwards compatibility)
     cli.run(
         [
             "ssh",

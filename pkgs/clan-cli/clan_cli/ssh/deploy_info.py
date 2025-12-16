@@ -64,8 +64,10 @@ def ssh_command(args: argparse.Namespace) -> None:
             host_key_check=args.host_key_check,
             ssh_options=ssh_options,
         )
-        if args.remote_command:
-            remote.interactive_ssh(args.remote_command)
+        # Support both positional command and --remote-command (positional takes precedence)
+        command = args.command if args.command else args.remote_command
+        if command:
+            remote.interactive_ssh(command)
         else:
             remote.interactive_ssh()
 
@@ -113,12 +115,19 @@ def register_parser(parser: argparse.ArgumentParser) -> None:
     )
 
     parser.add_argument(
+        "command",
+        nargs="*",
+        metavar="COMMAND",
+        help="Command to execute on the remote host (like standard ssh).",
+    )
+
+    parser.add_argument(
         "-c",
         "--remote-command",
         type=str,
         metavar="COMMAND",
         nargs=argparse.REMAINDER,
-        help="Command to execute on the remote host, needs to be the LAST argument as it takes all remaining arguments.",
+        help="(Deprecated, use positional COMMAND instead) Command to execute on the remote host.",
     )
 
     add_dynamic_completer(

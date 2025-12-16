@@ -275,6 +275,10 @@ Examples:
   Will ssh in to the machine called `berlin`, using the
   `clan.core.networking.targetHost` specified in its configuration
 
+  $ clan ssh berlin ls -la
+
+  Will execute `ls -la` on the remote machine `berlin`
+
   $ clan ssh --json [JSON] --host-key-check none
   Will ssh in to the machine based on the deployment information contained in
   the json string. [JSON] can either be a json formatted string itself, or point
