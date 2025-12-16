@@ -277,18 +277,25 @@ in
                           };
                         };
                       })
-                      (lib.optionalAttrs (!config.pkgs.stdenv.hostPlatform.isDarwin) {
+                      {
                         options.restartUnits = mkOption {
                           description = ''
                             A list of systemd units that should be restarted after the file is deployed.
                             This is useful for services that need to reload their configuration after the file is updated.
 
                             WARNING: currently only sops-nix implements this option.
+                            NOTE: This option is not supported on Darwin and will error if used.
                           '';
                           type = listOf str;
                           default = [ ];
+                          apply =
+                            value:
+                            if config.pkgs.stdenv.hostPlatform.isDarwin && value != [ ] then
+                              throw "restartUnits is not supported on Darwin"
+                            else
+                              value;
                         };
-                      })
+                      }
                     ];
                   })
                 );
