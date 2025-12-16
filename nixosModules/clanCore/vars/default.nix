@@ -18,6 +18,7 @@ in
   ]
   ++ lib.optionals (_class == "nixos") [
     ./secret/password-store.nix
+    ./secret/bitwarden.nix
   ];
 
   options.clan.core.vars = lib.mkOption {

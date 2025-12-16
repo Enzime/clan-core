@@ -95,6 +95,7 @@ in
       type = lib.types.enum [
         "sops"
         "password-store"
+        "bitwarden"
         "vm"
         "fs"
         "custom"
