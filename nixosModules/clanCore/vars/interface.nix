@@ -324,8 +324,6 @@ in
                       // lib.optionalAttrs file.config.secret {
                         default = throw "Cannot access value of secret file";
                       };
-                  }
-                  // (lib.optionalAttrs (_class == "nixos") {
                     restartUnits = mkOption {
                       description = ''
                         A list of systemd units that should be restarted after the file is deployed.
@@ -335,8 +333,13 @@ in
                       '';
                       type = listOf str;
                       default = [ ];
+                      apply =
+                        value:
+                        lib.throwIf (value != [ ] && _class == "darwin")
+                          "The restartUnits option is not supported on Darwin systems."
+                          value;
                     };
-                  });
+                  };
                 })
               );
             };
