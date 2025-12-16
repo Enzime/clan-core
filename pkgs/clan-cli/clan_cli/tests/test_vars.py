@@ -21,7 +21,7 @@ from clan_cli.vars.generator import (
 from clan_cli.vars.get import get_machine_var
 from clan_cli.vars.list import stringify_all_vars
 from clan_cli.vars.public_modules import in_repo
-from clan_cli.vars.secret_modules import password_store, sops
+from clan_cli.vars.secret_modules import bitwarden, password_store, sops
 from clan_cli.vars.set import set_var
 from clan_lib.errors import ClanError
 from clan_lib.flake import Flake
@@ -672,6 +672,114 @@ def test_generate_secret_var_password_store(
     )
     var_name = "my_shared_secret"
     assert store.exists(my_shared_generator, var_name)
+
+
+@pytest.mark.with_core
+def test_generate_secret_var_bitwarden(
+    monkeypatch: pytest.MonkeyPatch,
+    flake: ClanFlake,
+    test_root: Path,
+) -> None:
+    """Test generation of secret vars using the Bitwarden backend with mock rbw."""
+    config = flake.machines["my_machine"] = create_test_machine_config()
+    clan_vars = config["clan"]["core"]["vars"]
+    clan_vars["settings"]["secretStore"] = "bitwarden"
+
+    # Create generators with secrets
+    my_generator = clan_vars["generators"]["my_generator"]
+    my_generator["files"]["my_secret"]["secret"] = True
+    my_generator["script"] = 'echo hello > "$out"/my_secret'
+
+    my_generator2 = clan_vars["generators"]["my_generator2"]
+    my_generator2["files"]["my_secret2"]["secret"] = True
+    my_generator2["script"] = 'echo world > "$out"/my_secret2'
+
+    my_shared_generator = clan_vars["generators"]["my_shared_generator"]
+    my_shared_generator["share"] = True
+    my_shared_generator["files"]["my_shared_secret"]["secret"] = True
+    my_shared_generator["script"] = 'echo shared > "$out"/my_shared_secret'
+
+    flake.refresh()
+    monkeypatch.chdir(flake.path)
+
+    # Set up mock rbw
+    mock_rbw_script = test_root / "data" / "mock-rbw"
+    mock_rbw_store = flake.path / "rbw-store"
+    mock_rbw_store.mkdir(parents=True)
+    monkeypatch.setenv("MOCK_RBW_STORE_DIR", str(mock_rbw_store))
+
+    # Add mock rbw to PATH
+    mock_bin_dir = flake.path / "mock-bin"
+    mock_bin_dir.mkdir()
+    mock_rbw_link = mock_bin_dir / "rbw"
+    mock_rbw_link.symlink_to(mock_rbw_script)
+
+    original_path = os.environ.get("PATH", "")
+    monkeypatch.setenv("PATH", f"{mock_bin_dir}:{original_path}")
+
+    flake_obj = Flake(str(flake.path))
+    machine = Machine(name="my_machine", flake=flake_obj)
+    assert not check_vars(machine.name, machine.flake)
+
+    cli.run(["vars", "generate", "--flake", str(flake.path), "my_machine"])
+    assert check_vars(machine.name, machine.flake)
+
+    store = bitwarden.SecretStore(flake=flake_obj)
+
+    # Test per-machine generator
+    my_generator_obj = Generator(
+        "my_generator",
+        share=False,
+        files=[],
+        machines=["my_machine"],
+        _flake=flake_obj,
+    )
+    assert store.exists(my_generator_obj, "my_secret")
+    assert store.get(my_generator_obj, "my_secret").decode() == "hello\n"
+
+    # Test shared generator
+    my_shared_generator_obj = Generator(
+        "my_shared_generator",
+        share=True,
+        files=[],
+        machines=["my_machine"],
+        _flake=flake_obj,
+    )
+    assert store.exists(my_shared_generator_obj, "my_shared_secret")
+    assert store.get(my_shared_generator_obj, "my_shared_secret").decode() == "shared\n"
+
+    # Test that non-shared lookup for shared secret returns False
+    my_shared_generator_not_shared = Generator(
+        "my_shared_generator",
+        share=False,
+        files=[],
+        machines=["my_machine"],
+        _flake=flake_obj,
+    )
+    assert not store.exists(my_shared_generator_not_shared, "my_shared_secret")
+
+    # Test delete
+    store.delete(my_generator_obj, "my_secret")
+    assert not store.exists(my_generator_obj, "my_secret")
+
+    # Test delete_store
+    my_generator2_obj = Generator(
+        "my_generator2",
+        share=False,
+        files=[],
+        machines=["my_machine"],
+        _flake=flake_obj,
+    )
+    assert store.exists(my_generator2_obj, "my_secret2")
+    store.delete_store("my_machine")
+    store.delete_store("my_machine")  # check idempotency
+    assert not store.exists(my_generator2_obj, "my_secret2")
+
+    # Shared secrets should still exist after delete_store
+    assert store.exists(my_shared_generator_obj, "my_shared_secret")
+
+    vars_text = stringify_all_vars(machine)
+    assert "my_shared_generator/my_shared_secret" in vars_text
 
 
 @pytest.mark.with_core

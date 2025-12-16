@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# Mock rbw script for testing the Bitwarden vars backend
+# Stores secrets in files under $MOCK_RBW_STORE_DIR
+
+set -euo pipefail
+
+STORE_DIR="${MOCK_RBW_STORE_DIR:-/tmp/mock-rbw-store}"
+mkdir -p "$STORE_DIR"
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+    sync)
+        # No-op for mock
+        exit 0
+        ;;
+    get)
+        folder=""
+        name=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --folder)
+                    folder="$2"
+                    shift 2
+                    ;;
+                *)
+                    name="$1"
+                    shift
+                    ;;
+            esac
+        done
+
+        if [[ -z "$name" ]]; then
+            echo "Error: name required" >&2
+            exit 1
+        fi
+
+        secret_file="$STORE_DIR/${folder}/${name}"
+        if [[ -f "$secret_file" ]]; then
+            cat "$secret_file"
+            exit 0
+        else
+            echo "Error: entry not found" >&2
+            exit 1
+        fi
+        ;;
+    add)
+        folder=""
+        name=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --folder)
+                    folder="$2"
+                    shift 2
+                    ;;
+                *)
+                    name="$1"
+                    shift
+                    ;;
+            esac
+        done
+
+        if [[ -z "$name" ]]; then
+            echo "Error: name required" >&2
+            exit 1
+        fi
+
+        secret_dir="$STORE_DIR/${folder}"
+        mkdir -p "$secret_dir"
+        secret_file="$secret_dir/${name}"
+
+        # Read password from stdin
+        cat > "$secret_file"
+        exit 0
+        ;;
+    rm)
+        folder=""
+        name=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --folder)
+                    folder="$2"
+                    shift 2
+                    ;;
+                *)
+                    name="$1"
+                    shift
+                    ;;
+            esac
+        done
+
+        if [[ -z "$name" ]]; then
+            echo "Error: name required" >&2
+            exit 1
+        fi
+
+        secret_file="$STORE_DIR/${folder}/${name}"
+        if [[ -f "$secret_file" ]]; then
+            rm "$secret_file"
+        fi
+        exit 0
+        ;;
+    list)
+        fields=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --fields)
+                    fields="$2"
+                    shift 2
+                    ;;
+                *)
+                    shift
+                    ;;
+            esac
+        done
+
+        # List all entries as "folder\tname"
+        find "$STORE_DIR" -type f 2>/dev/null | while read -r file; do
+            rel_path="${file#$STORE_DIR/}"
+            folder="$(dirname "$rel_path")"
+            name="$(basename "$rel_path")"
+            printf "%s\t%s\n" "$folder" "$name"
+        done
+        exit 0
+        ;;
+    *)
+        echo "Unknown command: $cmd" >&2
+        exit 1
+        ;;
+esac
