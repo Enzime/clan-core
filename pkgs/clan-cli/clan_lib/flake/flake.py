@@ -530,6 +530,11 @@ class FlakeCacheEntry:
         if isinstance(self.value, str | float | int | None):
             return True
 
+        # mirror nix behavior where we check outPath if no further selector is specified
+        # this ensures store path existence is checked for derivation outputs
+        if selectors == [] and isinstance(self.value, dict) and "outPath" in self.value:
+            return self.value["outPath"].is_cached([])
+
         selector = Selector(type=SelectorType.ALL) if selectors == [] else selectors[0]
 
         # we just fetch all subkeys, so we need to check of we inserted all keys at this level before
